@@ -60,6 +60,9 @@ class PdfViewerParams {
     this.onTextSelectionChange,
     this.perPageSelectionAreaInjector,
     this.forceReload = false,
+    this.handleKeyboard = true,
+    this.initialPosition,
+    this.onMoveEnd,
   });
 
   /// Margin around the page.
@@ -376,6 +379,15 @@ class PdfViewerParams {
   /// Because changing certain fields like functions on [PdfViewerParams] does not run hot-reload on Flutter,
   /// sometimes it is useful to force reload the viewer by setting this to true.
   final bool forceReload;
+
+  /// If `true`, adds a [Focus] widget with keyboard handling.
+  final bool handleKeyboard;
+
+  /// Sets the initial [Matrix4] position on load. Useful for restoring state.
+  final Matrix4? initialPosition;
+
+  /// Callback to call when a move (zoom, pan, translate, or page change) completes.
+  final void Function(PdfViewerController controller)? onMoveEnd;
 
   /// Determine whether the viewer needs to be reloaded or not.
   ///

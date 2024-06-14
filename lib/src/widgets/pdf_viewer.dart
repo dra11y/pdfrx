@@ -342,8 +342,25 @@ class _PdfViewerState extends State<PdfViewer>
     super.dispose();
   }
 
+  Timer? _debounceNotifyMoveEndTimer;
+
+  void _debounceNotifyMoveEnd() {
+    if (!mounted || _controller == null || widget.params.onMoveEnd == null) {
+      return;
+    }
+    _debounceNotifyMoveEndTimer?.cancel();
+    _debounceNotifyMoveEndTimer = Timer(const Duration(milliseconds: 100), () {
+      _debounceNotifyMoveEndTimer = null;
+      if (!mounted || _controller == null) {
+        return;
+      }
+      widget.params.onMoveEnd!.call(_controller!);
+    });
+  }
+
   void _onMatrixChanged() {
     _stream.add(_txController.value);
+    _debounceNotifyMoveEnd();
   }
 
   @override
@@ -390,8 +407,14 @@ class _PdfViewerState extends State<PdfViewer>
             final initialPageNumber = widget.params.calculateInitialPageNumber
                     ?.call(_document!, _controller!) ??
                 widget.initialPageNumber;
-            await _goToPage(
-                pageNumber: initialPageNumber, duration: Duration.zero);
+
+            if (widget.params.initialPosition != null) {
+              await _goTo(widget.params.initialPosition!,
+                  duration: Duration.zero);
+            } else {
+              await _goToPage(
+                  pageNumber: initialPageNumber, duration: Duration.zero);
+            }
 
             if (mounted && _document != null && _controller != null) {
               widget.params.onViewerReady?.call(_document!, _controller!);
@@ -400,51 +423,54 @@ class _PdfViewerState extends State<PdfViewer>
         });
       }
 
+      final streamBuilder = StreamBuilder(
+          stream: _stream,
+          builder: (context, snapshot) {
+            _determineCurrentPage();
+            _calcAlternativeFitScale();
+            _calcZoomStopTable();
+            return Stack(
+              children: [
+                iv.InteractiveViewer(
+                  transformationController: _txController,
+                  constrained: false,
+                  boundaryMargin: widget.params.boundaryMargin ??
+                      const EdgeInsets.all(double.infinity),
+                  maxScale: widget.params.maxScale,
+                  minScale: _alternativeFitScale != null
+                      ? _alternativeFitScale! / 2
+                      : 0.1,
+                  panAxis: widget.params.panAxis,
+                  panEnabled: widget.params.panEnabled,
+                  scaleEnabled: widget.params.scaleEnabled,
+                  onInteractionEnd: widget.params.onInteractionEnd,
+                  onInteractionStart: widget.params.onInteractionStart,
+                  onInteractionUpdate: widget.params.onInteractionUpdate,
+                  onWheelDelta: widget.params.scrollByMouseWheel != null
+                      ? _onWheelDelta
+                      : null,
+                  // PDF pages
+                  child: CustomPaint(
+                    foregroundPainter:
+                        _CustomPainter.fromFunction(_customPaint),
+                    size: _layout!.documentSize,
+                  ),
+                ),
+                ..._buildPageOverlayWidgets(),
+                if (widget.params.viewerOverlayBuilder != null)
+                  ...widget.params.viewerOverlayBuilder!(context, _viewSize!)
+              ],
+            );
+          });
+
       return Container(
         color: widget.params.backgroundColor,
-        child: Focus(
-          onKeyEvent: _onKeyEvent,
-          child: StreamBuilder(
-              stream: _stream,
-              builder: (context, snapshot) {
-                _determineCurrentPage();
-                _calcAlternativeFitScale();
-                _calcZoomStopTable();
-                return Stack(
-                  children: [
-                    iv.InteractiveViewer(
-                      transformationController: _txController,
-                      constrained: false,
-                      boundaryMargin: widget.params.boundaryMargin ??
-                          const EdgeInsets.all(double.infinity),
-                      maxScale: widget.params.maxScale,
-                      minScale: _alternativeFitScale != null
-                          ? _alternativeFitScale! / 2
-                          : 0.1,
-                      panAxis: widget.params.panAxis,
-                      panEnabled: widget.params.panEnabled,
-                      scaleEnabled: widget.params.scaleEnabled,
-                      onInteractionEnd: widget.params.onInteractionEnd,
-                      onInteractionStart: widget.params.onInteractionStart,
-                      onInteractionUpdate: widget.params.onInteractionUpdate,
-                      onWheelDelta: widget.params.scrollByMouseWheel != null
-                          ? _onWheelDelta
-                          : null,
-                      // PDF pages
-                      child: CustomPaint(
-                        foregroundPainter:
-                            _CustomPainter.fromFunction(_customPaint),
-                        size: _layout!.documentSize,
-                      ),
-                    ),
-                    ..._buildPageOverlayWidgets(),
-                    if (widget.params.viewerOverlayBuilder != null)
-                      ...widget.params.viewerOverlayBuilder!(
-                          context, _viewSize!)
-                  ],
-                );
-              }),
-        ),
+        child: widget.params.handleKeyboard
+            ? Focus(
+                onKeyEvent: _onKeyEvent,
+                child: streamBuilder,
+              )
+            : streamBuilder,
       );
     });
   }
@@ -1548,6 +1574,12 @@ class PdfPageLayout {
 class PdfViewerController extends ValueListenable<Matrix4> {
   _PdfViewerState? __state;
   final _listeners = <VoidCallback>[];
+
+  void dispose() {
+    __state?._document?.dispose();
+    __state?._txController.dispose();
+    __state?.dispose();
+  }
 
   void _attach(_PdfViewerState? state) {
     __state?._txController.removeListener(_notifyListeners);
